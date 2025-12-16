@@ -2,33 +2,25 @@ name: Update GeoIP Database
 
 on:
   schedule:
-    - cron: '0 2 * * 3' # 每周三运行
+    - cron: '0 2 * * 3' # 每周三 UTC 02:00 运行
   workflow_dispatch: # 允许手动触发
 
 jobs:
   update:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 读写权限
+      contents: write # 读写权限 (提交代码 + 发版都需要)
       
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    # 1. 配置 Cloudflare WARP (解决 451/403 错误)
-    - name: Set up Cloudflare WARP
-      uses: fscarmen/warp-on-actions@v1.3
-      with:
-        stack: ipv4
-
-    # 2. 安装下载工具
     - name: Install geoipupdate
       run: |
         wget https://github.com/maxmind/geoipupdate/releases/download/v6.0.0/geoipupdate_6.0.0_linux_amd64.tar.gz
         tar -xzvf geoipupdate_6.0.0_linux_amd64.tar.gz
         sudo cp geoipupdate_6.0.0_linux_amd64/geoipupdate /usr/local/bin/
         
-    # 3. 下载三个库 (City, ASN, Country)
     - name: Run geoipupdate
       env:
         GEOIPUPDATE_ACCOUNT_ID: ${{ secrets.MAXMIND_ACCOUNT_ID }}
@@ -38,25 +30,42 @@ jobs:
         echo "AccountID $GEOIPUPDATE_ACCOUNT_ID" > GeoIP.conf
         echo "LicenseKey $GEOIPUPDATE_LICENSE_KEY" >> GeoIP.conf
         echo "EditionIDs $GEOIPUPDATE_EDITION_IDS" >> GeoIP.conf
-        # 增加重试机制
-        for i in {1..3}; do geoipupdate -d . -f GeoIP.conf -v && break || sleep 10; done
+        geoipupdate -d . -f GeoIP.conf -v
 
-    # 4. 暴力提交 (Force Push) - 彻底解决冲突
-    - name: Commit and Push
+    - name: Commit and Push to Repository
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add *.mmdb
         
-        # 检查有没有变动
+        # 检查有没有变动，没变动就不提交代码，但可能仍需发 Release (视情况而定)
         if git diff --quiet && git diff --staged --quiet; then
-          echo "No changes detected, skipping push"
-          exit 0
+          echo "No changes detected in repo."
+        else
+          TAG_DATE=$(date +'%Y-%m-%d')
+          git commit -m "Update databases: $TAG_DATE"
+          git pull --rebase origin main
+          git push
         fi
 
-        # 提交
-        git commit -m "Auto-update GeoIP databases"
+    # 🔥 核心新增：发布 Release
+    - name: Create GitHub Release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # 1. 生成日期标签，例如 2025-09-12 (UTC时间)
+        TAG_NAME=$(date +'%Y-%m-%d')
         
-        # 🔥 关键修改：使用 -f 强制推送
-        # 意思是：别管远程有什么，以我现在的版本为准！
-        git push -f origin main
+        # 2. 如果当天已经发过版（比如你手动跑了两次），先删除旧的，防止报错
+        # "|| true" 的意思是即使删除失败（比如不存在）也不报错，继续往下走
+        gh release delete "$TAG_NAME" --cleanup-tag -y || true
+        
+        # 3. 创建新 Release 并上传 3 个 .mmdb 文件
+        # --title: 标题
+        # --notes: 说明文案
+        gh release create "$TAG_NAME" \
+          GeoLite2-City.mmdb \
+          GeoLite2-ASN.mmdb \
+          GeoLite2-Country.mmdb \
+          --title "$TAG_NAME" \
+          --notes "MaxMind GeoLite2 databases updated on $TAG_NAME (UTC)."
