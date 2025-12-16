@@ -26,7 +26,7 @@ jobs:
       env:
         GEOIPUPDATE_ACCOUNT_ID: ${{ secrets.MAXMIND_ACCOUNT_ID }}
         GEOIPUPDATE_LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}
-        GEOIPUPDATE_EDITION_IDS: GeoLite2-City GeoLite2-ASN
+        GEOIPUPDATE_EDITION_IDS: GeoLite2-ASN GeoLite2-City GeoLite2-Country
       run: |
         # 创建配置
         echo "AccountID $GEOIPUPDATE_ACCOUNT_ID" > GeoIP.conf
