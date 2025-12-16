@@ -1,0 +1,44 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Update GeoIP Database
+
+# Controls when the workflow will run
+on:
+  schedule:
+    - cron: '0 2 * * 3' # 每周三 UTC 02:00 运行 (MaxMind 通常周二更新)
+  workflow_dispatch: # 允许手动点按钮触发
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+ update:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install geoipupdate
+      run: |
+        wget https://github.com/maxmind/geoipupdate/releases/download/v6.0.0/geoipupdate_6.0.0_linux_amd64.tar.gz
+        tar -xzvf geoipupdate_6.0.0_linux_amd64.tar.gz
+        sudo cp geoipupdate_6.0.0_linux_amd64/geoipupdate /usr/local/bin/
+        
+    - name: Run geoipupdate
+      env:
+        GEOIPUPDATE_ACCOUNT_ID: ${{ secrets.MAXMIND_ACCOUNT_ID }}
+        GEOIPUPDATE_LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}
+        GEOIPUPDATE_EDITION_IDS: GeoLite2-City GeoLite2-ASN
+      run: |
+        # 创建配置
+        echo "AccountID $GEOIPUPDATE_ACCOUNT_ID" > GeoIP.conf
+        echo "LicenseKey $GEOIPUPDATE_LICENSE_KEY" >> GeoIP.conf
+        echo "EditionIDs $GEOIPUPDATE_EDITION_IDS" >> GeoIP.conf
+        # 下载 (目录设为当前目录)
+        geoipupdate -d . -f GeoIP.conf -v
+
+    - name: Commit and Push
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add *.mmdb
+        # 如果有变动才提交
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update GeoIP databases" && git push)
